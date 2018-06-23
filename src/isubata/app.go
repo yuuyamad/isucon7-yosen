@@ -415,6 +415,50 @@ func queryChannels() ([]int64, error) {
 	return res, err
 }
 
+func getUnRead(c echo.Context) error {
+
+	type HaveRead struct {
+		UserID    int64     `db:"user_id"`
+		ChannelID int64     `db:"channel_id"`
+		MessageID int64     `db:"message_id"`
+	}
+	type HaveReads []HaveRead
+
+	have:= HaveReads{}
+	err := db.Select(&have,"SELECT user_id, channel_id, message_id FROM haveread")
+	if err != nil {
+		return err
+	}
+	for _, value := range have{
+		type Unread struct {
+			Unread int64 `db:"unread"`
+		}
+		count := Unread{}
+
+		//err := rows.Scan(&h.UserID, &h.ChannelID,&h.MessageID)
+		if err != nil {
+			return err
+		}
+		err = db.Get(&count,"SELECT count(m.id) as unread FROM haveread h , message m " +
+			"WHERE h.channel_id = m.channel_id " +
+			"AND h.message_id < m.id " +
+			"AND h.user_id = ? " +
+			"AND h.channel_id = ?", value.UserID, value.ChannelID)
+
+		if err != nil {
+			return err
+		}
+		_, err = db.Exec("INSERT INTO count (user_id, channel_id, unread) " +
+			"VALUES (?, ?, ?)", value.UserID, value.ChannelID, count.Unread)
+
+		if err != nil {
+			return err
+		}
+
+	}
+	return c.JSON(http.StatusOK, nil)
+}
+
 func queryHaveRead(userID, chID int64) (int64, error) {
 	type HaveRead struct {
 		UserID    int64     `db:"user_id"`
@@ -425,7 +469,7 @@ func queryHaveRead(userID, chID int64) (int64, error) {
 	}
 	h := HaveRead{}
 
-	err := db.Get(&h, "SELECT * FROM haveread WHERE user_id = ? AND channel_id = ?",
+	err := db.Get(&h, "SELECT message_id FROM haveread WHERE user_id = ? AND channel_id = ?",
 		userID, chID)
 
 	if err == sql.ErrNoRows {
@@ -694,6 +738,14 @@ func getIcon(c echo.Context) error {
 		return err
 	}
 
+	fn := fmt.Sprintf("../public/icons/%s", name)
+	f, err := os.OpenFile(fn, os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		panic(err)
+	}
+	f.Write(data)
+	f.Close()
+
 	mime := ""
 	switch true {
 	case strings.HasSuffix(name, ".jpg"), strings.HasSuffix(name, ".jpeg"):
@@ -747,6 +799,7 @@ func main() {
 	e.GET("/message", getMessage)
 	e.POST("/message", postMessage)
 	e.GET("/fetch", fetchUnread)
+	e.GET("/unread", getUnRead)
 	e.GET("/history/:channel_id", getHistory)
 
 	e.GET("/profile/:user_name", getProfile)
